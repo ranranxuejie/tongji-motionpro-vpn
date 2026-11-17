@@ -1,5 +1,9 @@
 # tongji-motionpro-vpn
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078d4)
+![MotionPro](https://img.shields.io/badge/MotionPro-1.2.29-success)
+
 用代码代替同济大学的 Array Networks **MotionPro** 图形客户端：命令行连上
 `vpn.tongji.cn`，并且**只让指定的校内域名/网段走 VPN**，其余流量仍然直连。
 
