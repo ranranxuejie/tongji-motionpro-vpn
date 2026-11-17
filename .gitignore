@@ -1,0 +1,18 @@
+# 凭据与运行时产物
+motionpro.env
+*.env
+!*.env.example
+
+# 状态与日志
+.split-vpn-state.json
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
