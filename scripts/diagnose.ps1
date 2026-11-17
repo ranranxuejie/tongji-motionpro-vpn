@@ -83,3 +83,4 @@ $ready = ($exe -and (Test-Admin))
 "可以连接      : $([bool]$exe)"
 "可以改路由    : $(Test-Admin)  (分流需要管理员；连接不需要)"
 "下一步        : $(if (-not $exe) { '安装 MotionPro' } elseif (-not (Test-Path (Join-Path $env:USERPROFILE '.tongji-motionpro-vpn\motionpro.env'))) { '写配置：setup-config.ps1' } else { 'vpn.ps1 up' })"
+exit 0
