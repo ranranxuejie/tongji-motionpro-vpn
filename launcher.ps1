@@ -1,7 +1,9 @@
 ﻿# 同济 VPN 控制台（图形界面启动器）
 #
-# 双击「启动器.cmd」即可打开。所有操作都调用同目录（或 scripts/）下的
-# vpn.ps1 / split-vpn.ps1，本文件只负责界面和状态显示。
+# 双击「启动器.cmd」打开。界面只负责交互与状态显示，
+# 实际动作调用同目录（或 scripts/）下的 vpn.ps1 / split-vpn.ps1。
+#
+# 所有输出同时写入 %LOCALAPPDATA%\tongji-motionpro-vpn\launcher.log，便于排查。
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -9,7 +11,22 @@ Add-Type -AssemblyName System.Drawing
 $ErrorActionPreference = 'SilentlyContinue'
 
 # ---------- 路径 ----------
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+# 启动器可能通过两种方式运行：
+#   1) 启动器.cmd 用 [scriptblock]::Create 加载（这时没有脚本路径，靠 TONGJI_VPN_DIR）
+#   2) 直接 powershell -File launcher.ps1（这时用脚本所在目录）
+$Root = $env:TONGJI_VPN_DIR
+if (-not $Root) {
+    if ($MyInvocation.MyCommand.Path) {
+        $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+    } else {
+        $Root = (Get-Location).Path
+    }
+}
+$Root = $Root.TrimEnd('\')
+$DataDir = Join-Path $env:LOCALAPPDATA 'tongji-motionpro-vpn'
+if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
+$LauncherLog = Join-Path $DataDir 'launcher.log'
+
 function Find-Engine([string]$Name) {
     $cands = @(
         (Join-Path $Root $Name),
@@ -68,9 +85,11 @@ function Get-Targets {
 }
 
 function Test-Sites {
-    $targets = Get-Targets
-    $hosts = $targets | Where-Object { $_ -notmatch '/' } | Select-Object -First 4
-    if (-not $hosts) { return '（配置里没有域名目标，可跳过）' }
+    $hosts = @(Get-Targets | Where-Object { $_ -notmatch '/' } | Select-Object -First 4)
+    if (-not $hosts -or $hosts.Count -eq 0) {
+        # 配置里只有网段时，用默认域名做抽查
+        $hosts = @('www.tongji.edu.cn', 'agi.tongji.edu.cn')
+    }
     $lines = @()
     foreach ($h in $hosts) {
         $r = & curl.exe -4 -sk -o NUL -w '%{http_code} %{remote_ip}' --max-time 8 "https://$h/" 2>$null
@@ -82,7 +101,7 @@ function Test-Sites {
 # ---------- 界面 ----------
 $form = New-Object System.Windows.Forms.Form
 $form.Text = '同济 VPN 控制台'
-$form.Size = New-Object System.Drawing.Size(760, 620)
+$form.Size = New-Object System.Drawing.Size(780, 660)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
@@ -91,52 +110,58 @@ $form.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
 $header = New-Object System.Windows.Forms.Label
 $header.Text = '同济 MotionPro VPN — 一键连接 / 分流'
 $header.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 13, [System.Drawing.FontStyle]::Bold)
-$header.Location = New-Object System.Drawing.Point(16, 12)
-$header.Size = New-Object System.Drawing.Size(710, 30)
+$header.Location = New-Object System.Drawing.Point(16, 10)
+$header.Size = New-Object System.Drawing.Size(730, 28)
 $form.Controls.Add($header)
 
 $sub = New-Object System.Windows.Forms.Label
-$sub.Text = "配置: " + ($(if ($ConfigPath) { $ConfigPath } else { '未找到 motionpro.env' }))
+$sub.Text = "配置: " + ($(if ($ConfigPath) { $ConfigPath } else { '未找到 motionpro.env（请先运行 setup-config.ps1）' }))
 $sub.ForeColor = [System.Drawing.Color]::DimGray
-$sub.Location = New-Object System.Drawing.Point(18, 44)
-$sub.Size = New-Object System.Drawing.Size(710, 20)
+$sub.Location = New-Object System.Drawing.Point(18, 40)
+$sub.Size = New-Object System.Drawing.Size(730, 20)
 $form.Controls.Add($sub)
 
 $statusBox = New-Object System.Windows.Forms.GroupBox
 $statusBox.Text = '当前状态'
-$statusBox.Location = New-Object System.Drawing.Point(16, 70)
-$statusBox.Size = New-Object System.Drawing.Size(712, 110)
+$statusBox.Location = New-Object System.Drawing.Point(16, 64)
+$statusBox.Size = New-Object System.Drawing.Size(732, 116)
 $form.Controls.Add($statusBox)
 
 $lblVpn = New-Object System.Windows.Forms.Label
 $lblVpn.Location = New-Object System.Drawing.Point(14, 24)
-$lblVpn.Size = New-Object System.Drawing.Size(340, 22)
+$lblVpn.Size = New-Object System.Drawing.Size(420, 22)
 $lblVpn.Text = 'VPN: -'
 $statusBox.Controls.Add($lblVpn)
 
 $lblSplit = New-Object System.Windows.Forms.Label
 $lblSplit.Location = New-Object System.Drawing.Point(14, 50)
-$lblSplit.Size = New-Object System.Drawing.Size(340, 22)
+$lblSplit.Size = New-Object System.Drawing.Size(560, 22)
 $lblSplit.Text = '分流: -'
 $statusBox.Controls.Add($lblSplit)
 
 $lblTargets = New-Object System.Windows.Forms.Label
 $lblTargets.Location = New-Object System.Drawing.Point(14, 76)
-$lblTargets.Size = New-Object System.Drawing.Size(680, 24)
+$lblTargets.Size = New-Object System.Drawing.Size(700, 22)
 $lblTargets.Text = '目标: -'
 $statusBox.Controls.Add($lblTargets)
 
+$lblBusy = New-Object System.Windows.Forms.Label
+$lblBusy.Location = New-Object System.Drawing.Point(450, 24)
+$lblBusy.Size = New-Object System.Drawing.Size(270, 22)
+$lblBusy.Text = ''
+$lblBusy.ForeColor = [System.Drawing.Color]::DarkOrange
+$statusBox.Controls.Add($lblBusy)
+
 $btnRefresh = New-Object System.Windows.Forms.Button
 $btnRefresh.Text = '刷新状态'
-$btnRefresh.Location = New-Object System.Drawing.Point(600, 20)
+$btnRefresh.Location = New-Object System.Drawing.Point(620, 22)
 $btnRefresh.Size = New-Object System.Drawing.Size(96, 30)
 $statusBox.Controls.Add($btnRefresh)
 
-# 按钮区
 $actions = New-Object System.Windows.Forms.GroupBox
 $actions.Text = '操作'
 $actions.Location = New-Object System.Drawing.Point(16, 188)
-$actions.Size = New-Object System.Drawing.Size(712, 96)
+$actions.Size = New-Object System.Drawing.Size(732, 100)
 $form.Controls.Add($actions)
 
 function New-Btn($text, $x, $y, $w = 128) {
@@ -147,24 +172,23 @@ function New-Btn($text, $x, $y, $w = 128) {
     return $b
 }
 
-$btnOneClick = New-Btn '一键：连接并分流' 14 22 150
+$btnOneClick = New-Btn '一键：连接并分流' 14 22 152
 $btnOneClick.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
-$btnConnect  = New-Btn '连接 VPN' 176 22 110
-$btnSplit    = New-Btn '分流（仅校内）' 294 22 130
-$btnGlobal   = New-Btn '恢复全局' 432 22 100
-$btnDisconnect = New-Btn '断开 VPN' 540 22 100
-$btnTest     = New-Btn '测试访问' 14 58 150
-$btnConfig   = New-Btn '打开配置' 176 58 110
-$btnLog      = New-Btn '打开日志' 294 58 110
-$btnReadme   = New-Btn '使用说明' 412 58 110
+$btnConnect  = New-Btn '连接 VPN' 178 22 104
+$btnSplit    = New-Btn '分流（仅校内）' 292 22 124
+$btnGlobal   = New-Btn '恢复全局' 424 22 96
+$btnDisconnect = New-Btn '断开 VPN' 528 22 96
+$btnTest     = New-Btn '测试访问' 14 60 152
+$btnConfig   = New-Btn '打开配置' 178 60 104
+$btnLog      = New-Btn '打开日志' 292 60 104
+$btnReadme   = New-Btn '使用说明' 404 60 104
 foreach ($b in @($btnOneClick, $btnConnect, $btnSplit, $btnGlobal, $btnDisconnect, $btnTest, $btnConfig, $btnLog, $btnReadme)) {
     $actions.Controls.Add($b)
 }
 
-# 日志区
 $logBox = New-Object System.Windows.Forms.TextBox
-$logBox.Location = New-Object System.Drawing.Point(16, 292)
-$logBox.Size = New-Object System.Drawing.Size(712, 270)
+$logBox.Location = New-Object System.Drawing.Point(16, 296)
+$logBox.Size = New-Object System.Drawing.Size(732, 316)
 $logBox.Multiline = $true
 $logBox.ScrollBars = 'Vertical'
 $logBox.ReadOnly = $true
@@ -173,7 +197,13 @@ $logBox.Font = New-Object System.Drawing.Font('Consolas', 9)
 $form.Controls.Add($logBox)
 
 function Write-Log([string]$text) {
-    $logBox.AppendText(("[{0}] {1}{2}" -f (Get-Date -Format 'HH:mm:ss'), $text, "`r`n"))
+    $stamp = Get-Date -Format 'HH:mm:ss'
+    $logBox.AppendText(("[{0}] {1}{2}" -f $stamp, $text, "`r`n"))
+    $logBox.SelectionStart = $logBox.Text.Length
+    $logBox.ScrollToCaret()
+    try {
+        Add-Content -Path $LauncherLog -Value ("{0} {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $text) -Encoding UTF8
+    } catch { }
 }
 
 function Update-Status {
@@ -186,10 +216,10 @@ function Update-Status {
         $lblVpn.ForeColor = [System.Drawing.Color]::Firebrick
     }
     if ($s.Split) {
-        $lblSplit.Text = '分流: 生效（仅校内目标走 VPN）'
+        $lblSplit.Text = '分流: 生效（只有校内目标走 VPN）'
         $lblSplit.ForeColor = [System.Drawing.Color]::SeaGreen
     } elseif ($s.Connected) {
-        $lblSplit.Text = '分流: 未生效（当前是全局模式，所有流量走 VPN）'
+        $lblSplit.Text = '分流: 未生效（全局模式，所有流量走 VPN）'
         $lblSplit.ForeColor = [System.Drawing.Color]::DarkOrange
     } else {
         $lblSplit.Text = '分流: -'
@@ -199,20 +229,39 @@ function Update-Status {
     $lblTargets.Text = '目标: ' + $(if ($t) { $t -join ', ' } else { '（未配置）' })
 }
 
-# ---------- 异步执行 ----------
+# ---------- 后台任务（带增量输出） ----------
 $script:Job = $null
 $script:JobName = ''
+$script:SeenLines = 0
+$script:StartAt = $null
 
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 700
+$timer.Interval = 800
 $timer.Add_Tick({
     if (-not $script:Job) { return }
+    # 增量读取输出：-Keep 保留，自己记录已消费的行数
+    $all = @(Receive-Job -Job $script:Job -Keep -ErrorAction SilentlyContinue)
+    if ($all.Count -gt $script:SeenLines) {
+        for ($i = $script:SeenLines; $i -lt $all.Count; $i++) {
+            $line = [string]$all[$i]
+            if ($line.Trim()) { Write-Log $line.TrimEnd() }
+        }
+        $script:SeenLines = $all.Count
+    }
+    if ($script:StartAt) {
+        $sec = [int]((Get-Date) - $script:StartAt).TotalSeconds
+        $lblBusy.Text = "运行中… ${sec}s"
+    }
     if ($script:Job.State -eq 'Running') { return }
-    $out = Receive-Job $script:Job 2>&1 | Out-String
+
+    # 收尾
+    $state = $script:Job.State
     Remove-Job $script:Job -Force -ErrorAction SilentlyContinue
     $script:Job = $null
-    if ($out.Trim()) { Write-Log $out.Trim() }
-    Write-Log "—— $($script:JobName) 结束 ——"
+    $script:SeenLines = 0
+    $script:StartAt = $null
+    $lblBusy.Text = ''
+    Write-Log "—— $($script:JobName) 结束（$state）——"
     Set-Buttons $true
     Update-Status
 })
@@ -225,16 +274,18 @@ function Set-Buttons([bool]$enabled) {
 
 function Start-Task([string]$label, [string]$scriptPath, [string[]]$arguments) {
     if ($script:Job) { Write-Log '有任务在运行，请稍候…'; return }
-    if (-not $scriptPath) { Write-Log '找不到脚本（vpn.ps1 / split-vpn.ps1）'; return }
+    if (-not $scriptPath) { Write-Log "找不到脚本：$scriptPath"; return }
     Write-Log "—— $label ——"
     $cfg = $ConfigPath
     $script:JobName = $label
+    $script:SeenLines = 0
+    $script:StartAt = Get-Date
     $script:Job = Start-Job -ScriptBlock {
         param($sp, $args_, $cfg)
         $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $sp)
         foreach ($a in @($args_)) { if ($null -ne $a) { $argv += $a } }
         if ($cfg) { $argv += @('-Config', $cfg) }
-        & powershell.exe @argv 2>&1 | Out-String
+        & powershell.exe @argv 2>&1 | ForEach-Object { [string]$_ }
     } -ArgumentList $scriptPath, (, $arguments), $cfg
     Set-Buttons $false
 }
@@ -243,15 +294,44 @@ function Start-Task([string]$label, [string]$scriptPath, [string[]]$arguments) {
 $btnRefresh.Add_Click({ Update-Status; Write-Log '状态已刷新' })
 
 $btnConnect.Add_Click({
-    Start-Task '连接 VPN' $VpnScript @('up')
+    Start-Task '连接 VPN（约 60~90 秒）' $VpnScript @('up')
 })
 
 $btnSplit.Add_Click({
-    Start-Task '分流（会弹 UAC）' $SplitScript @('on', '-PreferIPv4', '-Elevate')
+    if ($script:Job) { Write-Log '有任务在运行，请稍候…'; return }
+    if (-not $SplitScript) { Write-Log '找不到 split-vpn.ps1'; return }
+    $cfg = $ConfigPath
+    Write-Log '—— 分流（会弹 UAC，请点『是』）——'
+    $script:JobName = '分流'
+    $script:SeenLines = 0
+    $script:StartAt = Get-Date
+    $script:Job = Start-Job -ScriptBlock {
+        param($split, $cfg)
+        $common = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File')
+        $a = $common + @($split, 'on', '-PreferIPv4', '-Elevate'); if ($cfg) { $a += @('-Config', $cfg) }
+        & powershell.exe @a 2>&1 | ForEach-Object { [string]$_ }
+        "== 等待生效（最多 45 秒；请在 UAC 弹窗点『是』） =="
+        for ($i = 0; $i -lt 15; $i++) {
+            Start-Sleep -Seconds 3
+            $iface = Get-NetIPInterface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                     Where-Object { $_.InterfaceAlias -like '*Array Networks*' } | Select-Object -First 1
+            if (-not $iface) { continue }
+            $hasTarget = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '10.0.0.0/8' -ErrorAction SilentlyContinue |
+                         Where-Object InterfaceIndex -eq $iface.InterfaceIndex
+            $vpnDefault = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+                          Where-Object InterfaceIndex -eq $iface.InterfaceIndex
+            if ($hasTarget -and -not $vpnDefault) { "分流已生效 ✔"; break }
+        }
+        if (-not $hasTarget -or $vpnDefault) {
+            "!! 分流未生效：多半是 UAC 没点『是』。请重新点『分流（仅校内）』并在弹窗点『是』。"
+        }
+    } -ArgumentList $SplitScript, $cfg
+    Set-Buttons $false
 })
 
 $btnGlobal.Add_Click({
-    Start-Task '恢复全局模式（会弹 UAC）' $SplitScript @('off', '-Elevate')
+    Write-Log '恢复全局需要管理员：稍后会弹出 UAC，请点「是」'
+    Start-Task '恢复全局模式' $SplitScript @('off', '-Elevate')
 })
 
 $btnDisconnect.Add_Click({
@@ -261,23 +341,51 @@ $btnDisconnect.Add_Click({
 })
 
 $btnOneClick.Add_Click({
-    if (-not $VpnScript -or -not $SplitScript) { Write-Log '找不到脚本'; return }
+    if (-not $VpnScript -or -not $SplitScript) { Write-Log '找不到脚本（vpn.ps1 / split-vpn.ps1）'; return }
     if ($script:Job) { Write-Log '有任务在运行，请稍候…'; return }
     $cfg = $ConfigPath
     Write-Log '—— 一键：连接并分流 ——'
+    Write-Log '第 1 步：连接 VPN（约 60~90 秒，请勿关闭窗口）'
     $script:JobName = '一键：连接并分流'
+    $script:SeenLines = 0
+    $script:StartAt = Get-Date
     $script:Job = Start-Job -ScriptBlock {
         param($vpn, $split, $cfg)
         $common = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File')
-        $args1 = $common + @($vpn, 'up');      if ($cfg) { $args1 += @('-Config', $cfg) }
-        "== 连接 =="
-        & powershell.exe @args1 2>&1 | Out-String
-        $args2 = $common + @($split, 'on', '-PreferIPv4', '-Elevate'); if ($cfg) { $args2 += @('-Config', $cfg) }
-        "== 分流 =="
-        & powershell.exe @args2 2>&1 | Out-String
-        "== 等待生效 =="
-        Start-Sleep -Seconds 25
-        "== 完成，请点『刷新状态』确认 =="
+        $a1 = $common + @($vpn, 'up'); if ($cfg) { $a1 += @('-Config', $cfg) }
+        "== 第 1 步：连接 VPN（约 60~90 秒） =="
+        & powershell.exe @a1 2>&1 | ForEach-Object { [string]$_ }
+
+        # 连接结果校验：没拿到 VPN 网卡就不要继续
+        $iface = Get-NetIPInterface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                 Where-Object { $_.InterfaceAlias -like '*Array Networks*' } | Select-Object -First 1
+        $ip = $null
+        if ($iface) {
+            $ip = (Get-NetIPAddress -InterfaceIndex $iface.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                   Select-Object -First 1).IPAddress
+        }
+        if (-not $ip) {
+            "!! 连接失败：没拿到 VPN 地址，跳过分流。请点『连接 VPN』重试，或查看日志。"
+            return
+        }
+        "连接成功：$ip"
+
+        "== 第 2 步：分流（会弹 UAC，请点『是』） =="
+        $a2 = $common + @($split, 'on', '-PreferIPv4', '-Elevate'); if ($cfg) { $a2 += @('-Config', $cfg) }
+        & powershell.exe @a2 2>&1 | ForEach-Object { [string]$_ }
+
+        "== 第 3 步：等待分流生效（最多 45 秒） =="
+        $ok = $false
+        for ($i = 0; $i -lt 15; $i++) {
+            Start-Sleep -Seconds 3
+            $hasTarget = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '10.0.0.0/8' -ErrorAction SilentlyContinue |
+                         Where-Object InterfaceIndex -eq $iface.InterfaceIndex
+            $vpnDefault = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+                          Where-Object InterfaceIndex -eq $iface.InterfaceIndex
+            if ($hasTarget -and -not $vpnDefault) { $ok = $true; break }
+        }
+        if ($ok) { "分流已生效 ✔ 请点『刷新状态』确认。" }
+        else { "!! 分流未生效：多半是 UAC 没点『是』。请点『分流（仅校内）』重试。" }
     } -ArgumentList $VpnScript, $SplitScript, $cfg
     Set-Buttons $false
 })
@@ -294,9 +402,10 @@ $btnConfig.Add_Click({
 })
 
 $btnLog.Add_Click({
-    $log = Join-Path $env:LOCALAPPDATA 'tongji-motionpro-vpn\split.log'
-    if (Test-Path $log) { Start-Process notepad.exe $log }
-    else { Write-Log '还没有日志（执行过分流后才会生成）' }
+    $splitLog = Join-Path $DataDir 'split.log'
+    if (Test-Path $splitLog) { Start-Process notepad.exe $splitLog }
+    elseif (Test-Path $LauncherLog) { Start-Process notepad.exe $LauncherLog }
+    else { Write-Log '还没有日志' }
 })
 
 $btnReadme.Add_Click({
@@ -307,15 +416,29 @@ $btnReadme.Add_Click({
 })
 
 $form.Add_Shown({
-    Write-Log '就绪。点『一键：连接并分流』即可。'
+    Write-Log "控制台已启动（日志: $LauncherLog）"
+    Write-Log "目录: $Root"
+    Write-Log "连接脚本: $(if ($VpnScript) { $VpnScript } else { '未找到 vpn.ps1' })"
+    Write-Log "分流脚本: $(if ($SplitScript) { $SplitScript } else { '未找到 split-vpn.ps1' })"
+    Write-Log "配置文件: $(if ($ConfigPath) { $ConfigPath } else { '未找到 motionpro.env' })"
     if (-not $ConfigPath) { Write-Log '警告：未找到 motionpro.env，请先运行 setup-config.ps1' }
+    if (-not $VpnScript) { Write-Log '警告：找不到 vpn.ps1' }
+    if (-not $SplitScript) { Write-Log '警告：找不到 split-vpn.ps1' }
     Update-Status
     $timer.Start()
 })
 
 $form.Add_FormClosing({
+    if ($script:Job) {
+        $r = [System.Windows.Forms.MessageBox]::Show(
+            "任务仍在运行（$($script:JobName)）。`n关闭窗口会中断它（连接/分流可能失败）。`n确定关闭吗？",
+            '任务未完成', 'YesNo', 'Warning')
+        if ($r -ne 'Yes') { $_.Cancel = $true; return }
+        try { Stop-Job $script:Job -ErrorAction SilentlyContinue } catch { }
+        Remove-Job $script:Job -Force -ErrorAction SilentlyContinue
+        $script:Job = $null
+    }
     $timer.Stop()
-    if ($script:Job) { Remove-Job $script:Job -Force -ErrorAction SilentlyContinue }
 })
 
 [void]$form.ShowDialog()
