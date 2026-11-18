@@ -1,4 +1,4 @@
-# tongji-motionpro-vpn
+﻿# tongji-motionpro-vpn
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078d4)
@@ -36,6 +36,19 @@ www.baidu.com       : 200 182.61.200.108   ← 直连
    并绕开两个常见坑（系统代理劫持、IPv6 绕过隧道）。
 
 ## 快速开始
+
+### 0. 图形界面（最省事）
+
+装好并写好 `motionpro.env` 后，**双击 `启动器.cmd`** 打开控制台：
+
+- 状态区实时显示 VPN 是否连接、IP、分流是否生效、目标清单
+- **一键：连接并分流** —— 连 VPN → 分流（弹一次 UAC）→ 等 25 秒生效
+- 也可单独点：连接 VPN / 分流（仅校内）/ 恢复全局 / 断开 VPN / 测试访问
+- 打开配置、打开日志、使用说明
+- 想放桌面：双击 `创建桌面快捷方式.cmd`，会生成「同济 VPN 控制台」快捷方式
+
+界面逻辑在 `launcher.ps1`，只做界面和状态显示，实际动作仍调用
+`scripts/vpn.ps1` 与 `scripts/split-vpn.ps1`。
 
 ### 1. 安装（作为 agent skill）
 
