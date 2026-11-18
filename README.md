@@ -37,7 +37,34 @@ www.baidu.com       : 200 182.61.200.108   ← 直连
 
 ## 快速开始
 
-### 0. 图形界面（最省事）
+### 0. 单文件 exe（最省事，无命令行窗口）
+
+下载 [`dist/同济VPN控制台.exe`](dist/同济VPN控制台.exe)，和 `motionpro.env`
+放在**同一个文件夹**，双击运行即可：
+
+- 单文件、约 48 KB，不需要装 .NET 以外的任何东西（用系统自带 .NET Framework 4.x）
+- 编译为 `winexe`，**不会弹命令行窗口**
+- 首次运行会把引擎脚本解压到 `%LOCALAPPDATA%\tongji-motionpro-vpn\engine\`，
+  之后直接复用
+- 配置文件查找顺序：exe 同目录 → 上一级 → 上两级 → `%LOCALAPPDATA%\tongji-motionpro-vpn\`
+  → `%USERPROFILE%\.tongji-motionpro-vpn\`
+- 日志：`%LOCALAPPDATA%\tongji-motionpro-vpn\launcher.log`
+
+界面功能与下面的 `启动器.cmd` 完全一致：状态区、一键连接并分流、单独的连接/分流/
+恢复全局/断开/测试访问、打开配置与日志。
+
+重新编译（改了脚本后）：
+
+```powershell
+.\build-exe.cmd
+```
+
+> 需要管理员权限的只有「分流」这一步，程序会用 `runas` 触发 UAC；
+> 程序本身以普通用户运行。
+
+### 0.1 脚本版启动器（备选）
+
+不想要 exe 时，双击 `启动器.cmd` 也能打开同样界面的 PowerShell 版控制台。
 
 装好并写好 `motionpro.env` 后，**双击 `启动器.cmd`** 打开控制台：
 
